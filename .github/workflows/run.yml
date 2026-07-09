@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "1,16,31,46 * * * *"
   workflow_dispatch:
+    inputs:
+      test:
+        description: "Send test Telegram message (true/false)"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -12,24 +17,28 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: npm install
+      - name: Install deps
+        run: npm install
 
       - name: Run alerts
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TEST_MODE: ${{ github.event.inputs.test }}
         run: node alert.js
 
-      - name: Save updated state.json
+      - name: Save updated state.json (if changed)
         run: |
           if git diff --quiet; then
-            echo "No changes"
+            echo "No state changes"
           else
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
