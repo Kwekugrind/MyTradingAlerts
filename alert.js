@@ -7,7 +7,7 @@ const TG_CHAT_ID = process.env.TG_CHAT_ID;
 const APP_ID = 1089;
 const SYMBOL = "R_75";
 const TF = 900;          // M15
-const COUNT = 500;
+const COUNT = 600;
 
 function sma(values, length) {
   const out = Array(values.length).fill(null);
@@ -83,40 +83,44 @@ function getCandles() {
   const candles = await getCandles();
   const nowSec = Math.floor(Date.now() / 1000);
 
-  // use only fully closed candles
+  // only fully closed candles
   const closed = candles.filter(c => (c.epoch + TF) <= nowSec);
   if (closed.length < 60) return;
-
-  // last closed candle
-  const i = closed.length - 1;
-  const prev = i - 1;
-
-  const closeEpoch = closed[i].epoch + TF; // candle close time
-
-  // Deduplicate: process each candle close once
-  if (closeEpoch <= lastCloseEpoch) return;
 
   const closes = closed.map(c => c.close);
   const sma4 = sma(closes, 4);
   const sma34 = sma(closes, 34);
 
-  // update state (even if no signal; candle is final)
-  state.lastCloseEpoch = closeEpoch;
+  // Collect all NEW candle closes since last run
+  const newIdx = [];
+  for (let i = 1; i < closed.length; i++) {
+    const closeEpoch = closed[i].epoch + TF;
+    if (closeEpoch > lastCloseEpoch) newIdx.push(i);
+  }
+
+  if (newIdx.length === 0) return;
+
+  // Update state to the newest close (even if no signal)
+  const newestCloseEpoch = closed[closed.length - 1].epoch + TF;
+  state.lastCloseEpoch = newestCloseEpoch;
   fs.writeFileSync("state.json", JSON.stringify(state, null, 2));
 
-  if (sma4[prev] == null || sma34[prev] == null || sma4[i] == null || sma34[i] == null) return;
+  // Check crosses on each new candle (cap to avoid spam if many were missed)
+  const events = [];
+  for (const i of newIdx.slice(-8)) {
+    if (sma4[i-1] == null || sma34[i-1] == null || sma4[i] == null || sma34[i] == null) continue;
 
-  const buy  = crossover(sma4[prev], sma34[prev], sma4[i], sma34[i]);
-  const sell = crossunder(sma4[prev], sma34[prev], sma4[i], sma34[i]);
+    const buy  = crossover(sma4[i-1], sma34[i-1], sma4[i], sma34[i]);
+    const sell = crossunder(sma4[i-1], sma34[i-1], sma4[i], sma34[i]);
 
-  if (!(buy || sell)) return;
+    if (buy || sell) {
+      const closeEpoch = closed[i].epoch + TF;
+      const tClose = new Date(closeEpoch * 1000).toISOString().replace("T"," ").slice(0,19) + " UTC";
+      events.push(`${tClose} | Close ${closed[i].close} | ${buy ? "BUY (SMA4 ↑ SMA34)" : "SELL (SMA4 ↓ SMA34)"}`);
+    }
+  }
 
-  const tClose = new Date(closeEpoch * 1000).toISOString().replace("T"," ").slice(0,19) + " UTC";
-  const msg =
-    `V75 (${SYMBOL}) M15 SMA Cross\n` +
-    `Candle close: ${tClose}\n` +
-    `Close price: ${closed[i].close}\n` +
-    `${buy ? "BUY (SMA4 ↑ SMA34)" : "SELL (SMA4 ↓ SMA34)"}`;
+  if (!events.length) return;
 
-  await sendTelegram(msg);
+  await sendTelegram(`V75 (${SYMBOL}) M15 SMA Cross\n` + events.join("\n"));
 })();
