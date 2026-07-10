@@ -7,7 +7,7 @@ const TG_CHAT_ID = process.env.TG_CHAT_ID;
 // Deriv
 const APP_ID = 1089;
 const SYMBOL = "R_75";
-const TF = 900;     // M15
+const TF = 900;     // 15 minutes
 const COUNT = 700;  // candles requested from Deriv
 
 function sma(values, length) {
@@ -116,7 +116,7 @@ function fmtUTC(sec) {
 
   const newestCloseEpoch = closed[closed.length - 1].epoch + TF;
 
-  // Bootstrap: prevents sending old history if state was never set
+  // Bootstrap: prevents sending old historical signals
   if (lastCloseEpoch === 0) {
     state.lastCloseEpoch = newestCloseEpoch;
     fs.writeFileSync("state.json", JSON.stringify(state, null, 2));
@@ -148,6 +148,7 @@ function fmtUTC(sec) {
 
     if (buy || sell) {
       crossCount++;
+
       const openEpoch = closed[i].epoch;
       const closeEpoch = openEpoch + TF;
 
@@ -157,7 +158,7 @@ function fmtUTC(sec) {
     }
   }
 
-  // If Telegram fails, we throw and DO NOT advance state => next run retries (won’t miss latest).
+  // If Telegram fails, throw and DO NOT advance state => next run retries (won’t miss latest).
   if (lastEvent) {
     const note = crossCount > 1 ? `\n(${crossCount} crosses since last run; showing latest)` : "";
     await sendTelegram(`V75 (${SYMBOL}) M15 SMA Cross\n${lastEvent}${note}`);
