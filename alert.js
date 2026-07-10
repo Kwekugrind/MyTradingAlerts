@@ -70,7 +70,7 @@ function getCandles() {
         clearTimeout(timer);
         try { ws.close(); } catch {}
         resolve(data.candles.map(c => ({
-          epoch: c.epoch,   // candle OPEN time
+          epoch: c.epoch,   // candle OPEN time (seconds)
           close: +c.close
         })));
       }
@@ -92,6 +92,7 @@ function fmtUTC(sec) {
     throw new Error("Missing TG_BOT_TOKEN or TG_CHAT_ID. Add them in GitHub Secrets.");
   }
 
+  // Ensure state.json exists
   if (!fs.existsSync("state.json")) {
     fs.writeFileSync("state.json", JSON.stringify({ lastCloseEpoch: 0 }, null, 2));
   }
@@ -102,6 +103,7 @@ function fmtUTC(sec) {
   const candles = await getCandles();
   const nowSec = Math.floor(Date.now() / 1000);
 
+  // Only fully closed candles
   const closed = candles.filter(c => (c.epoch + TF) <= nowSec);
   if (closed.length < 60) {
     console.log("Not enough closed candles yet");
@@ -114,7 +116,7 @@ function fmtUTC(sec) {
 
   const newestCloseEpoch = closed[closed.length - 1].epoch + TF;
 
-  // First run: set state and do NOT alert history (prevents spam)
+  // Bootstrap: prevents sending old history if state was never set
   if (lastCloseEpoch === 0) {
     state.lastCloseEpoch = newestCloseEpoch;
     fs.writeFileSync("state.json", JSON.stringify(state, null, 2));
@@ -122,7 +124,7 @@ function fmtUTC(sec) {
     return;
   }
 
-  // Catch-up window: all new closed candles since last run
+  // Catch-up window: all candle closes since last run
   const newIdx = [];
   for (let i = 1; i < closed.length; i++) {
     const closeEpoch = closed[i].epoch + TF;
@@ -134,7 +136,7 @@ function fmtUTC(sec) {
     return;
   }
 
-  // Only the most recent cross (no spam), but keep count as a note
+  // Find only the MOST RECENT cross in the window (no spam)
   let lastEvent = null;
   let crossCount = 0;
 
@@ -155,7 +157,7 @@ function fmtUTC(sec) {
     }
   }
 
-  // If Telegram fails, we throw and DO NOT advance state => next run retries (won’t miss latest)
+  // If Telegram fails, we throw and DO NOT advance state => next run retries (won’t miss latest).
   if (lastEvent) {
     const note = crossCount > 1 ? `\n(${crossCount} crosses since last run; showing latest)` : "";
     await sendTelegram(`V75 (${SYMBOL}) M15 SMA Cross\n${lastEvent}${note}`);
@@ -164,6 +166,7 @@ function fmtUTC(sec) {
     console.log("No SMA cross in new candles");
   }
 
+  // Advance state after successful run (or no-signal run)
   state.lastCloseEpoch = newestCloseEpoch;
   fs.writeFileSync("state.json", JSON.stringify(state, null, 2));
 })();
