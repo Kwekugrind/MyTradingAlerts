@@ -7,7 +7,7 @@ const TG_CHAT_ID = process.env.TG_CHAT_ID;
 // Deriv
 const APP_ID = 1089;
 const SYMBOL = "R_75";
-const TF = 900;     // 15 minutes
+const TF = 900;     // 15 minutes (M15)
 const COUNT = 700;  // candles requested from Deriv
 
 function sma(values, length) {
@@ -92,6 +92,8 @@ function fmtUTC(sec) {
     throw new Error("Missing TG_BOT_TOKEN or TG_CHAT_ID. Add them in GitHub Secrets.");
   }
 
+  console.log("Run time (UTC):", new Date().toISOString());
+
   // Ensure state.json exists
   if (!fs.existsSync("state.json")) {
     fs.writeFileSync("state.json", JSON.stringify({ lastCloseEpoch: 0 }, null, 2));
@@ -116,7 +118,7 @@ function fmtUTC(sec) {
 
   const newestCloseEpoch = closed[closed.length - 1].epoch + TF;
 
-  // Bootstrap: prevents sending old historical signals
+  // Bootstrap: prevents sending old history
   if (lastCloseEpoch === 0) {
     state.lastCloseEpoch = newestCloseEpoch;
     fs.writeFileSync("state.json", JSON.stringify(state, null, 2));
@@ -136,7 +138,7 @@ function fmtUTC(sec) {
     return;
   }
 
-  // Find only the MOST RECENT cross in the window (no spam)
+  // Find only the MOST RECENT cross (no spam)
   let lastEvent = null;
   let crossCount = 0;
 
@@ -158,7 +160,7 @@ function fmtUTC(sec) {
     }
   }
 
-  // If Telegram fails, throw and DO NOT advance state => next run retries (won’t miss latest).
+  // If Telegram fails, do NOT advance state (so next run retries)
   if (lastEvent) {
     const note = crossCount > 1 ? `\n(${crossCount} crosses since last run; showing latest)` : "";
     await sendTelegram(`V75 (${SYMBOL}) M15 SMA Cross\n${lastEvent}${note}`);
