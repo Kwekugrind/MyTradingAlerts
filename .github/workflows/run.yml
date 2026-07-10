@@ -1,21 +1,16 @@
-name: V75 M15 SMA Alerts
+name: V75 M15 SMA Alerts (LIVE)
 
 on:
   schedule:
     - cron: "1,16,31,46 * * * *"
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: "live | test | backtest"
-        required: false
-        default: "test"
-      backtest_bars:
-        description: "How many M15 candles to scan in backtest"
-        required: false
-        default: "300"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
+
+concurrency:
+  group: v75-m15-sma-alerts
+  cancel-in-progress: false
 
 jobs:
   run:
@@ -32,22 +27,25 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Run alerts
+      - name: Run alerts (LIVE)
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          MODE: ${{ github.event.inputs.mode }}
-          BACKTEST_BARS: ${{ github.event.inputs.backtest_bars }}
         run: node alert.js
 
       - name: Save updated state.json (if changed)
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Rebase first to reduce push conflicts
+          git pull --rebase
+
           if git diff --quiet; then
             echo "No state changes"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add state.json
-            git commit -m "Update state"
-            git push
+            exit 0
           fi
+
+          git add state.json
+          git commit -m "Update state"
+          git push
