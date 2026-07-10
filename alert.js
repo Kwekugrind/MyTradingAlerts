@@ -92,29 +92,39 @@ function fmtUTC(sec) {
     throw new Error("Missing TG_BOT_TOKEN or TG_CHAT_ID. Add them in GitHub Secrets.");
   }
 
+  console.log("Run time (UTC):", new Date().toISOString());
+
   if (!fs.existsSync("state.json")) {
     fs.writeFileSync("state.json", JSON.stringify({ lastCloseEpoch: 0 }, null, 2));
   }
 
   const state = JSON.parse(fs.readFileSync("state.json", "utf8"));
   const lastCloseEpoch = Number(state.lastCloseEpoch || 0);
+  console.log("lastCloseEpoch:", lastCloseEpoch, lastCloseEpoch ? fmtUTC(lastCloseEpoch) : "(not set)");
 
   const candles = await getCandles();
   const nowSec = Math.floor(Date.now() / 1000);
 
   const closed = candles.filter(c => (c.epoch + TF) <= nowSec);
-  if (closed.length < 60) return;
+  console.log("Candles fetched:", candles.length, "| Closed candles:", closed.length);
+
+  if (closed.length < 60) {
+    console.log("Not enough closed candles yet");
+    return;
+  }
 
   const closes = closed.map(c => c.close);
   const sma4 = sma(closes, 4);
   const sma34 = sma(closes, 34);
 
   const newestCloseEpoch = closed[closed.length - 1].epoch + TF;
+  console.log("Newest closed candle CLOSE:", fmtUTC(newestCloseEpoch));
 
   // First run: set state, don't alert history
   if (lastCloseEpoch === 0) {
     state.lastCloseEpoch = newestCloseEpoch;
     fs.writeFileSync("state.json", JSON.stringify(state, null, 2));
+    console.log("Bootstrapped state.json; alerts start from next new closed candle.");
     return;
   }
 
@@ -124,7 +134,13 @@ function fmtUTC(sec) {
     const closeEpoch = closed[i].epoch + TF;
     if (closeEpoch > lastCloseEpoch) newIdx.push(i);
   }
-  if (!newIdx.length) return;
+
+  if (!newIdx.length) {
+    console.log("No new closed candles since last run");
+    return;
+  }
+
+  console.log("New closed candles since last run:", newIdx.length);
 
   // Latest cross only (no spam)
   let lastEvent = null;
@@ -140,17 +156,24 @@ function fmtUTC(sec) {
       crossCount++;
       const openEpoch = closed[i].epoch;
       const closeEpoch = openEpoch + TF;
+
       lastEvent =
         `${fmtUTC(openEpoch)} (OPEN) | ${fmtUTC(closeEpoch)} (CLOSE) | Close ${closed[i].close} | ` +
         (buy ? "BUY (SMA4 ↑ SMA34)" : "SELL (SMA4 ↓ SMA34)");
     }
   }
 
+  console.log("Crosses found in new window:", crossCount);
+
   if (lastEvent) {
     const note = crossCount > 1 ? `\n(${crossCount} crosses since last run; showing latest)` : "";
     await sendTelegram(`V75 (${SYMBOL}) M15 SMA Cross\n${lastEvent}${note}`);
+    console.log("Telegram sent.");
+  } else {
+    console.log("No SMA cross in new candles => no Telegram alert.");
   }
 
   state.lastCloseEpoch = newestCloseEpoch;
   fs.writeFileSync("state.json", JSON.stringify(state, null, 2));
+  console.log("State updated to:", fmtUTC(newestCloseEpoch));
 })();
