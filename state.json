@@ -1,3 +1,4 @@
 {
-  "lastCloseEpoch": 1783687500
+  "lastProcessedCloseEpoch": 0,
+  "lastAlertCloseEpoch": 0
 }
