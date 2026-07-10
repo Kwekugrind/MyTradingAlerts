@@ -4,14 +4,13 @@ const WebSocket = require("ws");
 const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
 
-const MODE = (process.env.MODE || "live").toLowerCase(); // live | backtest | test
-const BACKTEST_BARS = Number(process.env.BACKTEST_BARS || 300);
+const MODE = (process.env.MODE || "live").toLowerCase(); // forced to live by workflow
 
 // Deriv
 const APP_ID = 1089;
 const SYMBOL = "R_75";
 const TF = 900;     // M15
-const COUNT = 700;  // candles requested from Deriv
+const COUNT = 700;
 
 function sma(values, length) {
   const out = Array(values.length).fill(null);
@@ -77,7 +76,7 @@ function getCandles() {
         clearTimeout(timer);
         try { ws.close(); } catch {}
         resolve(data.candles.map(c => ({
-          epoch: c.epoch,     // candle OPEN time (seconds)
+          epoch: c.epoch,   // candle OPEN time
           close: +c.close
         })));
       }
@@ -94,14 +93,9 @@ function ensureState() {
   if (!fs.existsSync("state.json")) {
     fs.writeFileSync(
       "state.json",
-      JSON.stringify(
-        { lastProcessedCloseEpoch: 0, lastAlertCloseEpoch: 0 },
-        null,
-        2
-      )
+      JSON.stringify({ lastProcessedCloseEpoch: 0, lastAlertCloseEpoch: 0 }, null, 2)
     );
   }
-
   const s = JSON.parse(fs.readFileSync("state.json", "utf8"));
   return {
     lastProcessedCloseEpoch: Number(s.lastProcessedCloseEpoch || 0),
@@ -113,98 +107,47 @@ function ensureState() {
   if (!TG_BOT_TOKEN || !TG_CHAT_ID) {
     throw new Error("Missing TG_BOT_TOKEN or TG_CHAT_ID (GitHub Secrets).");
   }
-
-  console.log("MODE:", MODE);
-  console.log("Run time (UTC):", new Date().toISOString());
-
-  // TEST (manual only)
-  if (MODE === "test") {
-    await sendTelegram("✅ TEST OK: Bot is running. Time: " + new Date().toISOString());
-    console.log("Sent TEST message");
-    return;
+  if (MODE !== "live") {
+    throw new Error("This deployment is LIVE-only (MODE is forced to live in the workflow).");
   }
+
+  const state = ensureState();
 
   const candles = await getCandles();
   const nowSec = Math.floor(Date.now() / 1000);
 
+  // only fully closed candles
   const closed = candles.filter(c => (c.epoch + TF) <= nowSec);
-  console.log("Candles fetched:", candles.length, "| Closed:", closed.length);
-
-  if (closed.length < 60) {
-    console.log("Not enough closed candles yet");
-    return;
-  }
+  if (closed.length < 60) return;
 
   const closes = closed.map(c => c.close);
   const sma4 = sma(closes, 4);
   const sma34 = sma(closes, 34);
 
-  // BACKTEST (manual only): report last crosses (does not touch state.json)
-  if (MODE === "backtest") {
-    const start = Math.max(1, closed.length - Math.min(BACKTEST_BARS, closed.length - 1));
-    const found = [];
-
-    for (let i = start; i < closed.length; i++) {
-      if (sma4[i - 1] == null || sma34[i - 1] == null || sma4[i] == null || sma34[i] == null) continue;
-
-      const buy = crossover(sma4[i - 1], sma34[i - 1], sma4[i], sma34[i]);
-      const sell = crossunder(sma4[i - 1], sma34[i - 1], sma4[i], sma34[i]);
-
-      if (buy || sell) {
-        const openEpoch = closed[i].epoch;
-        const closeEpoch = openEpoch + TF;
-        found.push(
-          `${fmtUTC(openEpoch)} (OPEN) | ${fmtUTC(closeEpoch)} (CLOSE) | Close ${closed[i].close} | ` +
-          (buy ? "BUY (SMA4 ↑ SMA34)" : "SELL (SMA4 ↓ SMA34)")
-        );
-      }
-    }
-
-    if (!found.length) {
-      await sendTelegram(`BACKTEST: No SMA(4/34) crosses in last ${BACKTEST_BARS} M15 candles.`);
-      console.log("Backtest: no crosses");
-      return;
-    }
-
-    await sendTelegram(
-      `BACKTEST: SMA(4/34) crosses (last 8)\n` + found.slice(-8).join("\n")
-    );
-    console.log("Backtest sent:", found.length);
-    return;
-  }
-
-  // LIVE (scheduled runs are forced here)
-  const state = ensureState();
-  console.log("State:", state);
-
   const newestCloseEpoch = closed[closed.length - 1].epoch + TF;
-  console.log("Newest closed candle CLOSE:", fmtUTC(newestCloseEpoch));
 
-  // Bootstrap: start fresh (prevents historical spam)
+  // bootstrap: no historical alerts
   if (state.lastProcessedCloseEpoch === 0) {
-    const newState = {
-      lastProcessedCloseEpoch: newestCloseEpoch,
-      lastAlertCloseEpoch: newestCloseEpoch,
-    };
-    fs.writeFileSync("state.json", JSON.stringify(newState, null, 2));
-    console.log("Bootstrapped state.json; alerts start from next new closed candle.");
+    fs.writeFileSync(
+      "state.json",
+      JSON.stringify(
+        { lastProcessedCloseEpoch: newestCloseEpoch, lastAlertCloseEpoch: newestCloseEpoch },
+        null,
+        2
+      )
+    );
     return;
   }
 
-  // Catch-up window: candles closed after last processed close
+  // new candles since last processed
   const newIdx = [];
   for (let i = 1; i < closed.length; i++) {
     const closeEpoch = closed[i].epoch + TF;
     if (closeEpoch > state.lastProcessedCloseEpoch) newIdx.push(i);
   }
+  if (!newIdx.length) return;
 
-  if (!newIdx.length) {
-    console.log("No new closed candles since last run");
-    return;
-  }
-
-  console.log("New closed candles since last run:", newIdx.length);
-
+  // latest cross only (no spam)
   let lastEvent = null;
   let lastEventCloseEpoch = null;
   let crossCount = 0;
@@ -227,27 +170,30 @@ function ensureState() {
     }
   }
 
-  console.log("Crosses found in new window:", crossCount);
-
-  // If a cross exists, only alert if it's newer than the last alerted close
+  // Send only if we haven't already alerted that closeEpoch
   if (lastEvent && lastEventCloseEpoch > state.lastAlertCloseEpoch) {
     const note = crossCount > 1 ? `\n(${crossCount} crosses since last run; showing latest)` : "";
     await sendTelegram(`V75 (${SYMBOL}) M15 SMA Cross\n${lastEvent}${note}`);
-    console.log("Telegram sent.");
 
-    const newState = {
-      lastProcessedCloseEpoch: newestCloseEpoch,
-      lastAlertCloseEpoch: lastEventCloseEpoch,
-    };
-    fs.writeFileSync("state.json", JSON.stringify(newState, null, 2));
+    // update both processed + alerted
+    fs.writeFileSync(
+      "state.json",
+      JSON.stringify(
+        { lastProcessedCloseEpoch: newestCloseEpoch, lastAlertCloseEpoch: lastEventCloseEpoch },
+        null,
+        2
+      )
+    );
     return;
   }
 
-  // No new cross to alert — advance processed time only
-  const newState = {
-    lastProcessedCloseEpoch: newestCloseEpoch,
-    lastAlertCloseEpoch: state.lastAlertCloseEpoch,
-  };
-  fs.writeFileSync("state.json", JSON.stringify(newState, null, 2));
-  console.log("No alert sent.");
+  // no new alert, advance processed only
+  fs.writeFileSync(
+    "state.json",
+    JSON.stringify(
+      { lastProcessedCloseEpoch: newestCloseEpoch, lastAlertCloseEpoch: state.lastAlertCloseEpoch },
+      null,
+      2
+    )
+  );
 })();
