@@ -1,11 +1,6 @@
 name: V75 M15 SMA Alerts (LIVE)
 
 on:
-  # Keep GitHub schedule (4x/hour)
-  schedule:
-    - cron: "1,16,31,46 * * * *"
-
-  # External scheduler will trigger this via GitHub API
   workflow_dispatch: {}
 
 permissions:
