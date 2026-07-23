@@ -16,6 +16,7 @@ const CANDLES = 200;
 const ATR_PERIOD = 14;
 const FRACTAL_LOOKBACK = 8;
 const SETUP_EXPIRY_BARS = 15;
+const RISK_REWARD = 1.5; // 1:1.5 Risk-to-Reward Ratio
 
 const TG_TOKEN = process.env.TG_BOT_TOKEN;
 const TG_CHAT = process.env.TG_CHAT_ID;
@@ -447,7 +448,7 @@ async function runSummary(daysBack, title) {
       const slOption2 = entry - (atr14 * 1.5);
       sl = slOption1 !== null ? Math.min(slOption1, slOption2) : slOption2;
       risk = entry - sl;
-      tp1 = entry + (risk * 1.0);
+      tp1 = entry + (risk * RISK_REWARD);
       tp2 = entry + (risk * 2.0);
       tp3 = entry + (risk * 3.0);
     } else if (sellSignal) {
@@ -458,7 +459,7 @@ async function runSummary(daysBack, title) {
       const slOption2 = entry + (atr14 * 1.5);
       sl = slOption1 !== null ? Math.max(slOption1, slOption2) : slOption2;
       risk = sl - entry;
-      tp1 = entry - (risk * 1.0);
+      tp1 = entry - (risk * RISK_REWARD);
       tp2 = entry - (risk * 2.0);
       tp3 = entry - (risk * 3.0);
     }
@@ -474,7 +475,7 @@ async function runSummary(daysBack, title) {
         `Timeframe: M5\n\n` +
         `📍 Entry:  ${entry.toFixed(4)}\n` +
         `🛑 SL:     ${sl.toFixed(4)}\n` +
-        `🎯 TP1:    ${tp1.toFixed(4)}  (1:1)\n` +
+        `🎯 TP1:    ${tp1.toFixed(4)}  (1:1.5)\n` +
         `🎯 TP2:    ${tp2.toFixed(4)}  (2:1)\n` +
         `🎯 TP3:    ${tp3.toFixed(4)}  (3:1)\n\n` +
         `📊 Risk:   ${risk.toFixed(2)} points\n\n` +
@@ -510,7 +511,7 @@ async function runSummary(daysBack, title) {
         tp1: tp1,
         tp2: tp2,
         tp3: tp3,
-        rr: 1.5,
+        rr: RISK_REWARD,
         openTime: timeFormatted,
         closeTime: null,
         result: null
