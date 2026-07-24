@@ -20,6 +20,7 @@ const RISK_REWARD = 1.5; // 1:1.5 Risk-to-Reward Ratio
 
 const TG_TOKEN = process.env.TG_BOT_TOKEN;
 const TG_CHAT = process.env.TG_CHAT_ID;
+const DERIV_TOKEN = process.env.DERIV_API_TOKEN;
 const TRIGGER_SOURCE = process.env.TRIGGER_SOURCE;
 const MODE = process.env.MODE && process.env.MODE.trim() !== "" ? process.env.MODE.trim() : "scan";
 
@@ -61,7 +62,7 @@ async function sendTelegram(message) {
   }
 }
 
-// ==================== DERIV PUBLIC API HELPERS ====================
+// ==================== DERIV API HELPERS ====================
 async function fetchCandles(granularity, count = CANDLES) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
@@ -119,6 +120,70 @@ async function getCurrentPrice() {
 
     ws.on("error", (err) => {
       clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+// ==================== AUTOMATED EXECUTION ====================
+async function executeTrade(direction, entry, sl, tp1) {
+  if (!DERIV_TOKEN) {
+    console.log("⚠️ DERIV_API_TOKEN not found. Skipping live execution.");
+    return null;
+  }
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    
+    ws.on("open", () => {
+      console.log("🔄 Authorizing with Deriv API...");
+      ws.send(JSON.stringify({ authorize: DERIV_TOKEN }));
+    });
+
+    ws.on("message", (data) => {
+      const response = JSON.parse(data);
+
+      if (response.msg_type === "authorize") {
+        if (response.error) {
+          console.error("❌ Deriv Authorization Failed:", response.error.message);
+          ws.close();
+          return reject(response.error);
+        }
+
+        console.log("✅ Authorized successfully! Placing multiplier order...");
+        const contractType = direction === "BUY" ? "MULTUP" : "MULTDOWN";
+        const stakeUSD = 10; // Default test stake
+
+        ws.send(JSON.stringify({
+          buy: 1,
+          price: stakeUSD,
+          parameters: {
+            contract_type: contractType,
+            symbol: SYMBOL,
+            currency: "USD",
+            amount: stakeUSD,
+            basis: "stake",
+            multiplier: 50
+          }
+        }));
+      }
+
+      if (response.msg_type === "buy") {
+        if (response.error) {
+          console.error("❌ Trade Execution Error:", response.error.message);
+          ws.close();
+          resolve(null);
+        } else {
+          const contractId = response.buy.contract_id;
+          console.log(`✅ Live Demo Trade Executed! Contract ID: ${contractId}`);
+          ws.close();
+          resolve(contractId);
+        }
+      }
+    });
+
+    ws.on("error", (err) => {
+      console.error("❌ WebSocket Error:", err.message);
       reject(err);
     });
   });
@@ -262,19 +327,33 @@ async function runSummary(daysBack, title) {
     if (!candles || candles.length < 50) return;
     const i = candles.length - 2;
 
-    // 1. Check existing open trade settlement locally (TP1 or SL)
+    // 1. Check existing open trade settlement (TP1, SL, or M5 MACD Early Exit)
     let openTrade = trades.find(t => t.result === null);
     if (openTrade) {
       const currentPrice = await getCurrentPrice();
+      
+      const closes = candles.map(c => parseFloat(c.close));
+      const emaFast = ema(closes, 4);
+      const emaSlow = ema(closes, 34);
+      const macd = emaFast[i] - emaSlow[i];
+
       let settledResult = null;
       let exitReason = "";
 
-      if (openTrade.direction === "BUY") {
-        if (currentPrice >= openTrade.tp1) { settledResult = "WIN"; exitReason = "TP1 Hit"; }
-        else if (currentPrice <= openTrade.sl) { settledResult = "LOSS"; exitReason = "Stop Loss Hit"; }
+      if (openTrade.direction === "BUY" && macd < 0) {
+        settledResult = "LOSS";
+        exitReason = "M5 MACD Crossed Below Zero (Early Exit)";
+      } else if (openTrade.direction === "SELL" && macd > 0) {
+        settledResult = "LOSS";
+        exitReason = "M5 MACD Crossed Above Zero (Early Exit)";
       } else {
-        if (currentPrice <= openTrade.tp1) { settledResult = "WIN"; exitReason = "TP1 Hit"; }
-        else if (currentPrice >= openTrade.sl) { settledResult = "LOSS"; exitReason = "Stop Loss Hit"; }
+        if (openTrade.direction === "BUY") {
+          if (currentPrice >= openTrade.tp1) { settledResult = "WIN"; exitReason = "TP1 Hit"; }
+          else if (currentPrice <= openTrade.sl) { settledResult = "LOSS"; exitReason = "Stop Loss Hit"; }
+        } else {
+          if (currentPrice <= openTrade.tp1) { settledResult = "WIN"; exitReason = "TP1 Hit"; }
+          else if (currentPrice >= openTrade.sl) { settledResult = "LOSS"; exitReason = "Stop Loss Hit"; }
+        }
       }
 
       if (settledResult) {
@@ -409,9 +488,10 @@ async function runSummary(daysBack, title) {
 
       await sendTelegram(message);
 
-      // Log trade to trades.json to enforce Entry Guard and track outcomes
+      // Immediately log trade to trades.json to enforce Entry Guard
       trades.push({
         id: `${SYMBOL}-${isoTime}`,
+        contractId: null,
         repo: REPO_LABEL,
         symbol: SYMBOL,
         direction: direction,
@@ -426,6 +506,17 @@ async function runSummary(daysBack, title) {
         result: null
       });
       fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
+
+      // Execute live trade via Deriv WebSocket API
+      try {
+        const contractId = await executeTrade(direction, entry, sl, tp1);
+        if (contractId) {
+          trades[trades.length - 1].contractId = contractId;
+          fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
+        }
+      } catch (execErr) {
+        console.error("⚠️ Live execution warning:", execErr.message);
+      }
 
       state.waitingFor = null;
       state.setupEpoch = null;
