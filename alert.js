@@ -65,7 +65,7 @@ async function sendTelegram(message) {
 // ==================== DERIV API HELPERS ====================
 async function fetchCandles(granularity, count = CANDLES) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=33VaD9iKIb3cZxguzEkAo");
     const timeout = setTimeout(() => { ws.terminate(); reject(new Error("Timeout")); }, 15000);
 
     ws.on("open", () => {
