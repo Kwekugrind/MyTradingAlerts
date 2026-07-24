@@ -187,7 +187,7 @@ async function executeTrade(direction, entry, sl, tp1) {
         const contractType = direction === "BUY" ? "MULTUP" : "MULTDOWN";
         const stakeUSD = 10;
 
-        console.log(`🚀 Sending buy order for ${SYMBOL} (${contractType})...`);
+        console.log(`🚀 Sending clean buy order for ${SYMBOL} (${contractType})...`);
         ws.send(JSON.stringify({
           buy: 1,
           price: stakeUSD,
@@ -197,9 +197,7 @@ async function executeTrade(direction, entry, sl, tp1) {
             currency: "USD",
             amount: stakeUSD,
             basis: "stake",
-            multiplier: 50,
-            stop_loss: Math.abs(entry - sl).toFixed(2),
-            take_profit: Math.abs(tp1 - entry).toFixed(2)
+            multiplier: 50
           }
         }));
       });
