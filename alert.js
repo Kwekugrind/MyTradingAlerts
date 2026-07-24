@@ -132,6 +132,12 @@ async function executeTrade(direction, entry, sl, tp1) {
     return null;
   }
 
+  // --- DEBUG INSPECTION ---
+  console.log("🔍 [DEBUG] Token Length:", DERIV_TOKEN.length);
+  console.log("🔍 [DEBUG] Token Preview:", DERIV_TOKEN.substring(0, 3) + "..." + DERIV_TOKEN.slice(-3));
+  console.log("🔍 [DEBUG] Contains spaces or newlines:", /\s/.test(DERIV_TOKEN));
+  // ------------------------
+
   return new Promise((resolve, reject) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
     
@@ -152,7 +158,7 @@ async function executeTrade(direction, entry, sl, tp1) {
 
         console.log("✅ Authorized successfully! Placing multiplier order...");
         const contractType = direction === "BUY" ? "MULTUP" : "MULTDOWN";
-        const stakeUSD = 10; // Default test stake
+        const stakeUSD = 10;
 
         ws.send(JSON.stringify({
           buy: 1,
