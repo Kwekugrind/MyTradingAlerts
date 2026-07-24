@@ -63,7 +63,7 @@ async function sendTelegram(message) {
   }
 }
 
-// ==================== DERIV PUBLIC API HELPERS ====================
+// ==================== DERIV API HELPERS ====================
 async function fetchCandles(granularity, count = CANDLES) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
@@ -126,7 +126,7 @@ async function getCurrentPrice() {
   });
 }
 
-// ==================== AUTOMATED TRADING OPERATIONS ====================
+// AUTOMATED EXECUTION USING YOUR REGISTERED APP ID & PAT TOKEN
 async function executeTrade(direction, entry, sl, tp1) {
   if (!DERIV_TOKEN || !DERIV_APP_ID || DERIV_APP_ID === "YOUR_NUMERIC_APP_ID") {
     console.log("⚠️ DERIV_API_TOKEN or valid App ID missing. Skipping live execution.");
@@ -155,10 +155,9 @@ async function executeTrade(direction, entry, sl, tp1) {
         const contractType = direction === "BUY" ? "MULTUP" : "MULTDOWN";
         const stakeUSD = 10; // Default test stake
 
-        // Exact schema from Deriv API Trading Operations docs
         ws.send(JSON.stringify({
           buy: 1,
-          price: 100, // Maximum price willing to pay
+          price: stakeUSD,
           parameters: {
             contract_type: contractType,
             symbol: SYMBOL,
@@ -376,6 +375,7 @@ async function runSummary(daysBack, title) {
     if (!candles || candles.length < 50) return;
     const i = candles.length - 2;
 
+    // 1. Check existing open trade settlement (TP1, SL, or M5 MACD Early Exit)
     let openTrade = trades.find(t => t.result === null);
     if (openTrade) {
       const currentPrice = await getCurrentPrice();
@@ -421,6 +421,7 @@ async function runSummary(daysBack, title) {
       return;
     }
 
+    // 2. Run Strategy Engine (Entry Guard)
     const currentCandleEpoch = candles[i].epoch;
     const isoTime = new Date(currentCandleEpoch * 1000).toISOString();
 
