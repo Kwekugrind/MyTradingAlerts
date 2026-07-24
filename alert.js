@@ -102,7 +102,7 @@ async function fetchCandles(granularity, count = CANDLES) {
 
 async function getCurrentPrice() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=33VaD9iKIb3cZxguzEkAo");
     const timeout = setTimeout(() => { ws.terminate(); reject("Timeout"); }, 10000);
 
     ws.on("open", () => {
@@ -133,7 +133,7 @@ async function executeTrade(direction, entry, sl, tp1) {
   }
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=33VaD9iKIb3cZxguzEkAo");
     
     ws.on("open", () => {
       console.log("🔄 Authorizing with Deriv API...");
