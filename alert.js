@@ -414,7 +414,6 @@ async function runSummary(daysBack, title) {
       }
 
       if (settledResult) {
-        // If it's an early exit via MACD, actively close the live contract on Deriv via API
         if (openTrade.contractId && exitReason.includes("Early Exit")) {
           console.log(`🚨 Triggering early exit API closure for contract ID: ${openTrade.contractId}`);
           await closeContract(openTrade.contractId);
@@ -551,12 +550,10 @@ async function runSummary(daysBack, title) {
 
       await sendTelegram(message);
 
-      // Execute live trade and capture contract ID
-      const contractId = await executeTrade(direction, entry, sl, tp1);
-
+      // 1. IMMEDIATELY write to trades.json so the Entry Guard locks in and prevents duplicates
       trades.push({
         id: `${SYMBOL}-${isoTime}`,
-        contractId: contractId,
+        contractId: null,
         repo: REPO_LABEL,
         symbol: SYMBOL,
         direction: direction,
@@ -571,6 +568,17 @@ async function runSummary(daysBack, title) {
         result: null
       });
       fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
+
+      // 2. Safely execute live trade on Deriv and save contract ID in the background
+      try {
+        const contractId = await executeTrade(direction, entry, sl, tp1);
+        if (contractId) {
+          trades[trades.length - 1].contractId = contractId;
+          fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
+        }
+      } catch (execErr) {
+        console.error("⚠️ Live execution warning (signal already saved locally):", execErr.message);
+      }
 
       state.waitingFor = null;
       state.setupEpoch = null;
