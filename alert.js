@@ -3,10 +3,11 @@ import fetch from "node-fetch";
 import fs from "fs";
 
 // ==================== REPOSITORY CONFIGURATION ====================
+// Change these 3 lines for each respective repo:
 const SYMBOL = "R_100";                     // e.g., "R_75", "stpRNG", "R_50", "R_25", "R_100"
 const SYMBOL_NAME = "Volatility 100 Index"; // e.g., "Volatility 75 Index", "Step Index", etc.
 const REPO_LABEL = "Test Bot (V100)";       // e.g., "Lery's Elite Alerts", "Coffee Machine", etc.
-const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";     // <-- REPLACE WITH YOUR NUMERIC APP ID FROM DERIV
+const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";                // <-- REPLACE WITH YOUR NUMERIC APP ID FROM DERIV
 // ==================================================================
 
 const M5 = 300;       // 5 minutes in seconds
@@ -125,7 +126,7 @@ async function getCurrentPrice() {
   });
 }
 
-// OFFICIAL OPTIONS API WORKFLOW: REST Accounts -> REST OTP URL -> Authenticated WebSocket Buy
+// OFFICIAL OPTIONS API WORKFLOW: Proposal -> Buy (Locks strictly to Demo VRTC account)
 async function executeTrade(direction, entry, sl, tp1) {
   if (!DERIV_TOKEN || !DERIV_APP_ID || DERIV_APP_ID === "YOUR_NEW_APP_ID") {
     console.log("⚠️ DERIV_API_TOKEN or valid App ID missing. Skipping live execution.");
@@ -187,23 +188,38 @@ async function executeTrade(direction, entry, sl, tp1) {
         const contractType = direction === "BUY" ? "MULTUP" : "MULTDOWN";
         const stakeUSD = 10;
 
-        console.log(`🚀 Sending clean buy order for ${SYMBOL} (${contractType})...`);
+        console.log(`🚀 Requesting price proposal for ${SYMBOL} (${contractType})...`);
         ws.send(JSON.stringify({
-          buy: 1,
-          price: stakeUSD,
-          parameters: {
-            contract_type: contractType,
-            symbol: SYMBOL,
-            currency: "USD",
-            amount: stakeUSD,
-            basis: "stake",
-            multiplier: 50
-          }
+          proposal: 1,
+          amount: stakeUSD,
+          basis: "stake",
+          contract_type: contractType,
+          currency: "USD",
+          symbol: SYMBOL,
+          multiplier: 50
         }));
       });
 
       ws.on("message", (data) => {
         const response = JSON.parse(data);
+
+        if (response.msg_type === "proposal") {
+          if (response.error) {
+            clearTimeout(timeout);
+            console.error("❌ Proposal Error:", response.error.message);
+            ws.close();
+            resolve(null);
+          } else {
+            const proposalId = response.proposal.id;
+            const askPrice = response.proposal.ask_price;
+            console.log(`✅ Proposal received (ID: ${proposalId}, Price: ${askPrice}). Buying contract...`);
+
+            ws.send(JSON.stringify({
+              buy: proposalId,
+              price: askPrice
+            }));
+          }
+        }
 
         if (response.msg_type === "buy") {
           clearTimeout(timeout);
@@ -235,8 +251,40 @@ async function executeTrade(direction, entry, sl, tp1) {
 
 async function closeContract(contractId) {
   if (!DERIV_TOKEN || !DERIV_APP_ID || !contractId) return;
-  // Options API position closing via sell request on authenticated session
-  console.log(`ℹ️ Early exit triggered for contract ${contractId}`);
+  try {
+    const accountsRes = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
+      method: "GET",
+      headers: { "Deriv-App-ID": DERIV_APP_ID, "Authorization": `Bearer ${DERIV_TOKEN}` }
+    });
+    const accountsJson = await accountsRes.json();
+    const demoAccount = accountsJson.data?.find(acc => acc.account_type === "demo" && acc.status === "active");
+    if (!demoAccount) return;
+
+    const otpRes = await fetch(`https://api.derivws.com/trading/v1/options/accounts/${demoAccount.account_id}/otp`, {
+      method: "POST",
+      headers: { "Deriv-App-ID": DERIV_APP_ID, "Authorization": `Bearer ${DERIV_TOKEN}` }
+    });
+    const otpJson = await otpRes.json();
+    if (!otpJson.data?.url) return;
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(otpJson.data.url);
+      ws.on("open", () => {
+        ws.send(JSON.stringify({ sell: contractId, price: 0 }));
+      });
+      ws.on("message", (data) => {
+        const response = JSON.parse(data);
+        if (response.msg_type === "sell") {
+          console.log(`✅ Contract ${contractId} closed successfully via API.`);
+          ws.close();
+          resolve(response);
+        }
+      });
+      ws.on("error", reject);
+    });
+  } catch (err) {
+    console.error("❌ Close Contract Exception:", err.message);
+  }
 }
 
 // ==================== INDICATORS & FRACTALS ====================
@@ -369,13 +417,10 @@ async function runSummary(daysBack, title) {
       return;
     }
 
-    // ==================== TEMPORARY TEST BLOCK ====================
-    // Remove or comment out these 4 lines after your test trade goes through!
-    console.log("🧪 Running manual test trade execution...");
-    const testId = await executeTrade("BUY", 1000, 900, 1150);
-    console.log(`🧪 Test completed with ID: ${testId}`);
-    return; 
-    // ==============================================================
+    // Uncomment the next 3 lines ONLY if you want to test a manual live trade right now:
+    // console.log("🧪 Running manual test trade execution...");
+    // const testId = await executeTrade("BUY", 1000, 900, 1150);
+    // return; 
 
     await new Promise(resolve => setTimeout(resolve, 5000));
 
@@ -385,6 +430,7 @@ async function runSummary(daysBack, title) {
     if (!candles || candles.length < 50) return;
     const i = candles.length - 2;
 
+    // 1. Check existing open trade settlement (TP1, SL, or M5 MACD Early Exit)
     let openTrade = trades.find(t => t.result === null);
     if (openTrade) {
       const currentPrice = await getCurrentPrice();
@@ -414,6 +460,11 @@ async function runSummary(daysBack, title) {
       }
 
       if (settledResult) {
+        if (openTrade.contractId && exitReason.includes("Early Exit")) {
+          console.log(`🚨 Triggering early exit API closure for contract ID: ${openTrade.contractId}`);
+          await closeContract(openTrade.contractId);
+        }
+
         openTrade.result = settledResult;
         openTrade.closeTime = new Date().toISOString();
         fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
@@ -425,6 +476,7 @@ async function runSummary(daysBack, title) {
       return;
     }
 
+    // 2. Run Strategy Engine (Entry Guard)
     const currentCandleEpoch = candles[i].epoch;
     const isoTime = new Date(currentCandleEpoch * 1000).toISOString();
 
@@ -523,7 +575,7 @@ async function runSummary(daysBack, title) {
         `🛑 SL:     ${sl.toFixed(4)}\n` +
         `🎯 TP1:    ${tp1.toFixed(4)}  (1:1.5)\n` +
         `🎯 TP2:    ${tp2.toFixed(4)}  (2:1)\n` +
-        `🎯 TP3:    ` + `${tp3.toFixed(4)}  (3:1)\n\n` +
+        `🎯 TP3:    ${tp3.toFixed(4)}  (3:1)\n\n` +
         `📊 Risk:   ${risk.toFixed(2)} points\n\n` +
         `🔥 Setup:  Fractal break confirmed with impulse\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
