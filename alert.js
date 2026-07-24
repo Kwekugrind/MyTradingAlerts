@@ -3,11 +3,11 @@ import fetch from "node-fetch";
 import fs from "fs";
 
 // ==================== REPOSITORY CONFIGURATION ====================
-// Change these 3 lines for each respective repo:
+// Change these 4 lines for each respective repo:
 const SYMBOL = "R_100";                     // e.g., "R_75", "stpRNG", "R_50", "R_25", "R_100"
 const SYMBOL_NAME = "Volatility 100 Index"; // e.g., "Volatility 75 Index", "Step Index", etc.
 const REPO_LABEL = "Test Bot (V100)";       // e.g., "Lery's Elite Alerts", "Coffee Machine", etc.
-const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";               // <-- REPLACE "12345" WITH YOUR NEW NUMERIC APP ID FROM DERIV
+const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";               // <-- REPLACE WITH YOUR NUMERIC APP ID FROM DERIV
 // ==================================================================
 
 const M5 = 300;       // 5 minutes in seconds
@@ -190,6 +190,7 @@ async function executeTrade(direction, entry, sl, tp1) {
   });
 }
 
+// EARLY EXIT: Actively sells/closes an open contract on Deriv's server when MACD triggers
 async function closeContract(contractId) {
   if (!DERIV_TOKEN || !DERIV_APP_ID || !contractId) return;
   return new Promise((resolve, reject) => {
@@ -223,6 +224,7 @@ async function closeContract(contractId) {
     });
 
     ws.on("error", (err) => {
+      console.error("❌ WebSocket Error:", err.message);
       reject(err);
     });
   });
@@ -305,7 +307,7 @@ async function getD1Context() {
     } else if (close < open) {
       direction = "🔴 BEARISH";
       change = open - close;
-      changePct = ((change / open) * 100);
+      changePct = ((open - close) / open) * 100;
     } else {
       direction = "⚪ NEUTRAL";
       change = 0;
@@ -360,10 +362,10 @@ async function runSummary(daysBack, title) {
 
     // ==================== TEMPORARY TEST BLOCK ====================
     // Remove or comment out these 4 lines after your test trade goes through!
-    console.log("🧪 Running manual test trade execution...");
-    const testId = await executeTrade("BUY", 1000, 900, 1150);
-    console.log(`🧪 Test completed with ID: ${testId}`);
-    return; 
+    // console.log("🧪 Running manual test trade execution...");
+    // const testId = await executeTrade("BUY", 1000, 900, 1150);
+    // console.log(`🧪 Test completed with ID: ${testId}`);
+    // return; 
     // ==============================================================
 
     await new Promise(resolve => setTimeout(resolve, 5000));
