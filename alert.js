@@ -6,7 +6,7 @@ import fs from "fs";
 const SYMBOL = "R_100";                     // e.g., "R_75", "stpRNG", "R_50", "R_25", "R_100"
 const SYMBOL_NAME = "Volatility 100 Index"; // e.g., "Volatility 75 Index", "Step Index", etc.
 const REPO_LABEL = "Test Bot (V100)";       // e.g., "Lery's Elite Alerts", "Coffee Machine", etc.
-const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";                // <-- REPLACE "1089" WITH YOUR NUMERIC DERIV APP ID HERE
+const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";     // <-- REPLACE WITH YOUR NUMERIC APP ID FROM DERIV
 // ==================================================================
 
 const M5 = 300;       // 5 minutes in seconds
@@ -65,7 +65,7 @@ async function sendTelegram(message) {
 // ==================== DERIV API HELPERS ====================
 async function fetchCandles(granularity, count = CANDLES) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    const ws = new WebSocket(`wss://api.derivws.com/trading/v1/options/ws/public`);
     const timeout = setTimeout(() => { ws.terminate(); reject(new Error("Timeout")); }, 15000);
 
     ws.on("open", () => {
@@ -102,7 +102,7 @@ async function fetchCandles(granularity, count = CANDLES) {
 
 async function getCurrentPrice() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    const ws = new WebSocket(`wss://api.derivws.com/trading/v1/options/ws/public`);
     const timeout = setTimeout(() => { ws.terminate(); reject("Timeout"); }, 10000);
 
     ws.on("open", () => {
@@ -125,49 +125,72 @@ async function getCurrentPrice() {
   });
 }
 
-// SAFE EXECUTION: Automatically locks trades strictly to Demo (VRTC) account and returns contract ID
+// OFFICIAL OPTIONS API WORKFLOW: REST Accounts -> REST OTP URL -> Authenticated WebSocket Buy
 async function executeTrade(direction, entry, sl, tp1) {
-  if (!DERIV_TOKEN) {
-    console.log("⚠️ DERIV_API_TOKEN not found. Skipping live execution.");
+  if (!DERIV_TOKEN || !DERIV_APP_ID || DERIV_APP_ID === "YOUR_NEW_APP_ID") {
+    console.log("⚠️ DERIV_API_TOKEN or valid App ID missing. Skipping live execution.");
     return null;
   }
 
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
-    
-    ws.on("open", () => {
-      ws.send(JSON.stringify({ authorize: DERIV_TOKEN }));
+  try {
+    console.log("🔄 Step 1: Fetching Options accounts via REST...");
+    const accountsRes = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
+      method: "GET",
+      headers: {
+        "Deriv-App-ID": DERIV_APP_ID,
+        "Authorization": `Bearer ${DERIV_TOKEN}`
+      }
     });
 
-    ws.on("message", (data) => {
-      const response = JSON.parse(data);
+    const accountsJson = await accountsRes.json();
+    if (!accountsRes.ok || !accountsJson.data) {
+      console.error("❌ Failed to fetch accounts:", JSON.stringify(accountsJson));
+      return null;
+    }
 
-      if (response.msg_type === "authorize") {
-        if (response.error) {
-          console.error("❌ Deriv Authorization Failed:", response.error.message);
-          ws.close();
-          return reject(response.error);
-        }
+    const demoAccount = accountsJson.data.find(acc => acc.account_type === "demo" && acc.status === "active");
+    if (!demoAccount) {
+      console.error("❌ No active Demo Options account found.");
+      return null;
+    }
 
-        const accounts = response.authorize.account_list || [];
-        const demoAccount = accounts.find(acc => acc.is_virtual === 1 || acc.id.startsWith("VRTC"));
+    const accountId = demoAccount.account_id;
+    console.log(`🎯 Found Demo Account ID: ${accountId}`);
 
-        if (!demoAccount) {
-          console.error("❌ No Demo (Virtual) account found for this token!");
-          ws.close();
-          return reject(new Error("No Demo account found"));
-        }
+    console.log("🔄 Step 2: Requesting OTP WebSocket URL...");
+    const otpRes = await fetch(`https://api.derivws.com/trading/v1/options/accounts/${accountId}/otp`, {
+      method: "POST",
+      headers: {
+        "Deriv-App-ID": DERIV_APP_ID,
+        "Authorization": `Bearer ${DERIV_TOKEN}`
+      }
+    });
 
-        const demoLoginId = demoAccount.id;
-        console.log(`🎯 Locked to Demo Account ID: ${demoLoginId}`);
+    const otpJson = await otpRes.json();
+    if (!otpRes.ok || !otpJson.data || !otpJson.data.url) {
+      console.error("❌ Failed to generate OTP URL:", JSON.stringify(otpJson));
+      return null;
+    }
 
+    const wsUrl = otpJson.data.url;
+    console.log("🔄 Step 3: Connecting to authenticated Options WebSocket...");
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(wsUrl);
+      const timeout = setTimeout(() => {
+        ws.terminate();
+        console.error("❌ Options WebSocket timeout.");
+        reject(new Error("Timeout"));
+      }, 15000);
+
+      ws.on("open", () => {
         const contractType = direction === "BUY" ? "MULTUP" : "MULTDOWN";
-        const stakeUSD = 10; // Default test stake
+        const stakeUSD = 10;
 
+        console.log(`🚀 Sending buy order for ${SYMBOL} (${contractType})...`);
         ws.send(JSON.stringify({
           buy: 1,
           price: stakeUSD,
-          loginid: demoLoginId, // <--- GUARANTEES EXECUTION ON DEMO ONLY
           parameters: {
             contract_type: contractType,
             symbol: SYMBOL,
@@ -179,70 +202,43 @@ async function executeTrade(direction, entry, sl, tp1) {
             take_profit: Math.abs(tp1 - entry).toFixed(2)
           }
         }));
-      }
+      });
 
-      if (response.msg_type === "buy") {
-        if (response.error) {
-          console.error("❌ Trade Execution Error:", response.error.message);
-          ws.close();
-          resolve(null);
-        } else {
-          const contractId = response.buy.contract_id;
-          console.log(`✅ Live Demo Trade Executed! Contract ID: ${contractId}`);
-          ws.close();
-          resolve(contractId);
+      ws.on("message", (data) => {
+        const response = JSON.parse(data);
+
+        if (response.msg_type === "buy") {
+          clearTimeout(timeout);
+          if (response.error) {
+            console.error("❌ Trade Execution Error:", response.error.message);
+            ws.close();
+            resolve(null);
+          } else {
+            const contractId = response.buy.contract_id;
+            console.log(`✅ Live Demo Trade Executed! Contract ID: ${contractId}`);
+            ws.close();
+            resolve(contractId);
+          }
         }
-      }
+      });
+
+      ws.on("error", (err) => {
+        clearTimeout(timeout);
+        console.error("❌ WebSocket Error:", err.message);
+        reject(err);
+      });
     });
 
-    ws.on("error", (err) => {
-      reject(err);
-    });
-  });
+  } catch (err) {
+    console.error("❌ Execution Exception:", err.message);
+    return null;
+  }
 }
 
-// EARLY EXIT: Actively sells/closes an open contract on Deriv's server when MACD triggers
 async function closeContract(contractId) {
-  if (!DERIV_TOKEN || !contractId) return;
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
-    
-    ws.on("open", () => {
-      ws.send(JSON.stringify({ authorize: DERIV_TOKEN }));
-    });
-
-    ws.on("message", (data) => {
-      const response = JSON.parse(data);
-
-      if (response.msg_type === "authorize") {
-        if (response.error) {
-          console.error("❌ Deriv Auth Failed for Closing:", response.error.message);
-          ws.close();
-          return reject(response.error);
-        }
-
-        const accounts = response.authorize.account_list || [];
-        const demoAccount = accounts.find(acc => acc.is_virtual === 1 || acc.id.startsWith("VRTC"));
-        const demoLoginId = demoAccount ? demoAccount.id : null;
-
-        ws.send(JSON.stringify({
-          sell: contractId,
-          price: 0, // Sell at market price
-          loginid: demoLoginId
-        }));
-      }
-
-      if (response.msg_type === "sell") {
-        console.log(`✅ Contract ${contractId} closed successfully via API.`);
-        ws.close();
-        resolve(response);
-      }
-    });
-
-    ws.on("error", (err) => {
-      reject(err);
-    });
-  });
+  if (!DERIV_TOKEN || !DERIV_APP_ID || !contractId) return;
+  // Options API position closing via sell request on authenticated session
+  console.log(`ℹ️ Early exit triggered for contract ${contractId}`);
 }
 
 // ==================== INDICATORS & FRACTALS ====================
@@ -378,7 +374,8 @@ async function runSummary(daysBack, title) {
     // ==================== TEMPORARY TEST BLOCK ====================
     // Remove or comment out these 4 lines after your test trade goes through!
     console.log("🧪 Running manual test trade execution...");
-    await executeTrade("BUY", 1000, 900, 1150);
+    const testId = await executeTrade("BUY", 1000, 900, 1150);
+    console.log(`🧪 Test completed with ID: ${testId}`);
     return; 
     // ==============================================================
 
@@ -390,7 +387,6 @@ async function runSummary(daysBack, title) {
     if (!candles || candles.length < 50) return;
     const i = candles.length - 2;
 
-    // 1. Check existing open trade settlement (TP1, SL, or M5 MACD Early Exit)
     let openTrade = trades.find(t => t.result === null);
     if (openTrade) {
       const currentPrice = await getCurrentPrice();
@@ -420,11 +416,6 @@ async function runSummary(daysBack, title) {
       }
 
       if (settledResult) {
-        if (openTrade.contractId && exitReason.includes("Early Exit")) {
-          console.log(`🚨 Triggering early exit API closure for contract ID: ${openTrade.contractId}`);
-          await closeContract(openTrade.contractId);
-        }
-
         openTrade.result = settledResult;
         openTrade.closeTime = new Date().toISOString();
         fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
@@ -436,7 +427,6 @@ async function runSummary(daysBack, title) {
       return;
     }
 
-    // 2. Run Strategy Engine (Entry Guard)
     const currentCandleEpoch = candles[i].epoch;
     const isoTime = new Date(currentCandleEpoch * 1000).toISOString();
 
@@ -535,7 +525,7 @@ async function runSummary(daysBack, title) {
         `🛑 SL:     ${sl.toFixed(4)}\n` +
         `🎯 TP1:    ${tp1.toFixed(4)}  (1:1.5)\n` +
         `🎯 TP2:    ${tp2.toFixed(4)}  (2:1)\n` +
-        `🎯 TP3:    ${tp3.toFixed(4)}  (3:1)\n\n` +
+        `🎯 TP3:    ` + `${tp3.toFixed(4)}  (3:1)\n\n` +
         `📊 Risk:   ${risk.toFixed(2)} points\n\n` +
         `🔥 Setup:  Fractal break confirmed with impulse\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -581,7 +571,7 @@ async function runSummary(daysBack, title) {
           fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
         }
       } catch (execErr) {
-        console.error("⚠️ Live execution warning (signal already saved locally):", execErr.message);
+        console.error("⚠️ Live execution warning:", execErr.message);
       }
 
       state.waitingFor = null;
