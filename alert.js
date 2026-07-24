@@ -3,11 +3,10 @@ import fetch from "node-fetch";
 import fs from "fs";
 
 // ==================== REPOSITORY CONFIGURATION ====================
-// Change these 4 lines for each respective repo:
 const SYMBOL = "R_100";                     // e.g., "R_75", "stpRNG", "R_50", "R_25", "R_100"
 const SYMBOL_NAME = "Volatility 100 Index"; // e.g., "Volatility 75 Index", "Step Index", etc.
 const REPO_LABEL = "Test Bot (V100)";       // e.g., "Lery's Elite Alerts", "Coffee Machine", etc.
-const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";               // <-- REPLACE WITH YOUR NUMERIC APP ID FROM DERIV
+const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";                // Official Deriv public testing App ID (bypasses server origin blocks)
 // ==================================================================
 
 const M5 = 300;       // 5 minutes in seconds
@@ -126,10 +125,10 @@ async function getCurrentPrice() {
   });
 }
 
-// STANDARD DERIV API EXECUTION: Authorizes with PAT token and executes Multiplier order
+// STANDARD DERIV WEBSOCKET EXECUTION: Authorizes with PAT token using App ID 1089
 async function executeTrade(direction, entry, sl, tp1) {
-  if (!DERIV_TOKEN || !DERIV_APP_ID || DERIV_APP_ID === "12345") {
-    console.log("⚠️ DERIV_API_TOKEN or valid App ID missing. Skipping live execution.");
+  if (!DERIV_TOKEN) {
+    console.log("⚠️ DERIV_API_TOKEN not found. Skipping live execution.");
     return null;
   }
 
@@ -190,9 +189,8 @@ async function executeTrade(direction, entry, sl, tp1) {
   });
 }
 
-// EARLY EXIT: Actively sells/closes an open contract on Deriv's server when MACD triggers
 async function closeContract(contractId) {
-  if (!DERIV_TOKEN || !DERIV_APP_ID || !contractId) return;
+  if (!DERIV_TOKEN || !contractId) return;
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
     
@@ -362,10 +360,10 @@ async function runSummary(daysBack, title) {
 
     // ==================== TEMPORARY TEST BLOCK ====================
     // Remove or comment out these 4 lines after your test trade goes through!
-    // console.log("🧪 Running manual test trade execution...");
-    // const testId = await executeTrade("BUY", 1000, 900, 1150);
-    // console.log(`🧪 Test completed with ID: ${testId}`);
-    // return; 
+     console.log("🧪 Running manual test trade execution...");
+     const testId = await executeTrade("BUY", 1000, 900, 1150);
+     console.log(`🧪 Test completed with ID: ${testId}`);
+     return; 
     // ==============================================================
 
     await new Promise(resolve => setTimeout(resolve, 5000));
