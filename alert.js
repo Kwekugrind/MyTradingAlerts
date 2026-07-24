@@ -418,9 +418,9 @@ async function runSummary(daysBack, title) {
     }
 
     // Uncomment the next 3 lines ONLY if you want to test a manual live trade right now:
-    // console.log("🧪 Running manual test trade execution...");
-    // const testId = await executeTrade("BUY", 1000, 900, 1150);
-    // return; 
+     console.log("🧪 Running manual test trade execution...");
+     const testId = await executeTrade("BUY", 1000, 900, 1150);
+     return; 
 
     await new Promise(resolve => setTimeout(resolve, 5000));
 
