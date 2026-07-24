@@ -7,7 +7,7 @@ import fs from "fs";
 const SYMBOL = "R_100";                     // e.g., "R_75", "stpRNG", "R_50", "R_25", "R_100"
 const SYMBOL_NAME = "Volatility 100 Index"; // e.g., "Volatility 75 Index", "Step Index", etc.
 const REPO_LABEL = "Test Bot (V100)";       // e.g., "Lery's Elite Alerts", "Coffee Machine", etc.
-const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo"; // <-- YOUR NUMERIC APP ID FROM DEVELOPERS.DERIV.COM
+const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo";               // <-- YOUR NUMERIC APP ID FROM DEVELOPERS.DERIV.COM
 // ==================================================================
 
 const M5 = 300;       // 5 minutes in seconds
@@ -63,7 +63,7 @@ async function sendTelegram(message) {
   }
 }
 
-// ==================== DERIV PUBLIC API HELPERS ====================
+// ==================== DERIV API HELPERS ====================
 async function fetchCandles(granularity, count = CANDLES) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=1089`);
@@ -126,7 +126,7 @@ async function getCurrentPrice() {
   });
 }
 
-// ==================== OPTIONS REST + OTP EXECUTION ====================
+// OFFICIAL OPTIONS API WORKFLOW: REST Accounts -> REST OTP URL -> Proposal (with underlying_symbol) -> Buy
 async function executeTrade(direction, entry, sl, tp1) {
   if (!DERIV_TOKEN || !DERIV_APP_ID || DERIV_APP_ID === "YOUR_NUMERIC_APP_ID") {
     console.log("⚠️ DERIV_API_TOKEN or valid App ID missing. Skipping live execution.");
@@ -194,7 +194,8 @@ async function executeTrade(direction, entry, sl, tp1) {
           amount: stakeUSD,
           basis: "stake",
           contract_type: contractType,
-          currency: "USD"
+          currency: "USD",
+          underlying_symbol: SYMBOL // <--- FIXED FIELD NAME
         }));
       });
 
@@ -545,7 +546,7 @@ async function runSummary(daysBack, title) {
       if (d1) {
         message += `Direction:  ${d1.direction}\n` +
           `D1 Open:    ${d1.open.toFixed(4)}\n` +
-          `D1 Current: ${d1.close.directional}\n` +
+          `D1 Current: ${d1.close.toFixed(4)}\n` +
           `Movement:   ${d1.change.toFixed(4)} points (${d1.changePct.toFixed(2)}%)\n` +
           `Alignment:  ${alignment}\n\n`;
       } else {
