@@ -3,11 +3,10 @@ import fetch from "node-fetch";
 import fs from "fs";
 
 // ==================== REPOSITORY CONFIGURATION ====================
-// Change these 4 lines for each respective repo:
+// Change these 3 lines for each respective repo:
 const SYMBOL = "R_100";                     // e.g., "R_75", "stpRNG", "R_50", "R_25", "R_100"
 const SYMBOL_NAME = "Volatility 100 Index"; // e.g., "Volatility 75 Index", "Step Index", etc.
 const REPO_LABEL = "Test Bot (V100)";       // e.g., "Lery's Elite Alerts", "Coffee Machine", etc.
-const DERIV_APP_ID = "33VaD9iKIb3cZxguzEkAo"; // <-- PUT YOUR NUMERIC APP ID FROM DEVELOPERS.DERIV.COM HERE
 // ==================================================================
 
 const M5 = 300;       // 5 minutes in seconds
@@ -63,10 +62,12 @@ async function sendTelegram(message) {
   }
 }
 
-// ==================== DERIV API HELPERS ====================
+// ==================== DERIV API HELPERS (WITH ORIGIN BYPASS) ====================
 async function fetchCandles(granularity, count = CANDLES) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089", {
+      headers: { "Origin": "https://deriv.com" }
+    });
     const timeout = setTimeout(() => { ws.terminate(); reject(new Error("Timeout")); }, 15000);
 
     ws.on("open", () => {
@@ -103,7 +104,9 @@ async function fetchCandles(granularity, count = CANDLES) {
 
 async function getCurrentPrice() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089", {
+      headers: { "Origin": "https://deriv.com" }
+    });
     const timeout = setTimeout(() => { ws.terminate(); reject("Timeout"); }, 10000);
 
     ws.on("open", () => {
@@ -126,15 +129,17 @@ async function getCurrentPrice() {
   });
 }
 
-// AUTOMATED EXECUTION USING YOUR REGISTERED APP ID & PAT TOKEN
+// AUTOMATED EXECUTION WITH BROWSER ORIGIN HEADER
 async function executeTrade(direction, entry, sl, tp1) {
-  if (!DERIV_TOKEN || !DERIV_APP_ID || DERIV_APP_ID === "YOUR_NUMERIC_APP_ID") {
-    console.log("⚠️ DERIV_API_TOKEN or valid App ID missing. Skipping live execution.");
+  if (!DERIV_TOKEN) {
+    console.log("⚠️ DERIV_API_TOKEN not found. Skipping live execution.");
     return null;
   }
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089", {
+      headers: { "Origin": "https://deriv.com" }
+    });
     
     ws.on("open", () => {
       console.log("🔄 Authorizing with Deriv API...");
@@ -151,7 +156,7 @@ async function executeTrade(direction, entry, sl, tp1) {
           return reject(response.error);
         }
 
-        console.log("✅ Authorized successfully! Placing Multiplier order...");
+        console.log("✅ Authorized successfully! Placing multiplier order...");
         const contractType = direction === "BUY" ? "MULTUP" : "MULTDOWN";
         const stakeUSD = 10; // Default test stake
 
@@ -191,9 +196,11 @@ async function executeTrade(direction, entry, sl, tp1) {
 }
 
 async function closeContract(contractId) {
-  if (!DERIV_TOKEN || !DERIV_APP_ID || !contractId) return;
+  if (!DERIV_TOKEN || !contractId) return;
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089", {
+      headers: { "Origin": "https://deriv.com" }
+    });
     
     ws.on("open", () => {
       ws.send(JSON.stringify({ authorize: DERIV_TOKEN }));
