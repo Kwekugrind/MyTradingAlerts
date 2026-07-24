@@ -189,6 +189,45 @@ async function executeTrade(direction, entry, sl, tp1) {
   });
 }
 
+async function closeContract(contractId) {
+  if (!DERIV_TOKEN || !contractId) return;
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    
+    ws.on("open", () => {
+      ws.send(JSON.stringify({ authorize: DERIV_TOKEN }));
+    });
+
+    ws.on("message", (data) => {
+      const response = JSON.parse(data);
+
+      if (response.msg_type === "authorize") {
+        if (response.error) {
+          console.error("❌ Deriv Auth Failed for Closing:", response.error.message);
+          ws.close();
+          return reject(response.error);
+        }
+
+        ws.send(JSON.stringify({
+          sell: contractId,
+          price: 0
+        }));
+      }
+
+      if (response.msg_type === "sell") {
+        console.log(`✅ Contract ${contractId} closed successfully via API.`);
+        ws.close();
+        resolve(response);
+      }
+    });
+
+    ws.on("error", (err) => {
+      console.error("❌ WebSocket Error:", err.message);
+      reject(err);
+    });
+  });
+}
+
 // ==================== INDICATORS & FRACTALS ====================
 function sma(data, period) {
   return data.map((_, i, arr) => {
@@ -318,6 +357,13 @@ async function runSummary(daysBack, title) {
       await runSummary(30, "Monthly Report");
       return;
     }
+
+    // ==================== ACTIVE TEST BLOCK ====================
+    console.log("🧪 Running manual test trade execution...");
+    const testId = await executeTrade("BUY", 1000, 900, 1150);
+    console.log(`🧪 Test completed with ID: ${testId}`);
+    return; // This stops the script here so it only tests the trade execution
+    // ============================================================
 
     await new Promise(resolve => setTimeout(resolve, 5000));
 
@@ -488,7 +534,6 @@ async function runSummary(daysBack, title) {
 
       await sendTelegram(message);
 
-      // Immediately log trade to trades.json to enforce Entry Guard
       trades.push({
         id: `${SYMBOL}-${isoTime}`,
         contractId: null,
@@ -507,7 +552,6 @@ async function runSummary(daysBack, title) {
       });
       fs.writeFileSync("trades.json", JSON.stringify(trades, null, 2));
 
-      // Execute live trade via Deriv WebSocket API
       try {
         const contractId = await executeTrade(direction, entry, sl, tp1);
         if (contractId) {
